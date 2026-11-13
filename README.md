@@ -1,56 +1,56 @@
 # AnyConnect Unmetered
 
-一個輕量級的 LSPosed / Xposed 模組，用於解決 Android 10+ 環境下使用 Cisco Secure Client (AnyConnect) 連接 VPN 時，即使底層為 Wi-Fi 仍被系統與 Google Photos 等應用判定為「計費網路（Metered Network）」的問題。
+A lightweight LSPosed / Xposed module that allows Cisco Secure Client (AnyConnect) VPN to inherit the unmetered status of its underlying Wi-Fi network on Android 10+, preventing apps like Google Photos from misidentifying Wi-Fi VPN connections as metered cellular networks.
 
-## 問題背景
+## Background
 
-從 Android 10 (API 29) 開始，`VpnService.Builder.setMetered(boolean)` 的預設值為 `true`。若 VPN 應用在建立隧道時沒有顯式呼叫 `builder.setMetered(false)`，即使 `UnderlyingNetworks` 綁定的是不計費的 Wi-Fi，Android 系統建立的 VPN `NetworkAgent` 仍會缺少 `NET_CAPABILITY_NOT_METERED` 能力標記。
+Starting with Android 10 (API 29), `VpnService.Builder.setMetered(boolean)` defaults to `true`. If a VPN app does not explicitly call `builder.setMetered(false)` when establishing the tunnel, the resulting VPN `NetworkAgent` lacks the `NET_CAPABILITY_NOT_METERED` capability—even when `UnderlyingNetworks` is bound to an unmetered Wi-Fi network.
 
-這會導致依賴非計費網路判斷的應用（例如 Google Photos 的僅 Wi-Fi 自動備份、Google Play 背景更新等）將其視為計費網路，進而停留在「正在等待 WLAN 連接」狀態。
+As a result, apps and background jobs that check for unmetered connectivity (such as Google Photos Wi-Fi-only backup or Google Play updates) treat the VPN connection as metered and stay paused with messages like "Waiting for Wi-Fi".
 
-## 運作原理
+## How It Works
 
-本模組僅針對目標進程 `com.cisco.anyconnect.vpn.android.avf` 進行局部 Hook，不修改系統框架（`system_server`），亦不影響其他應用：
+This module hooks only the target process `com.cisco.anyconnect.vpn.android.avf` without touching `system_server` or other apps:
 
-1. 在 `android.net.VpnService$Builder.establish()` 執行前呼叫 `setMetered(false)`。
-2. 攔截 `android.net.VpnService$Builder.setMetered(boolean)`，確保不會被目標應用覆寫回 `true`。
+1. Calls `setMetered(false)` on the `android.net.VpnService$Builder` instance right before `establish()` is invoked.
+2. Hooks `android.net.VpnService$Builder.setMetered(boolean)` to ensure `true` is overridden to `false`.
 
-### 為什麼不會影響真正的 4G / 5G 流量？
+### Why Cellular (4G / 5G) Metering Remains Unaffected
 
-在 Android 的網路模型中，呼叫 `setMetered(false)` 代表「VPN 隧道本身不額外視為計費網路，請依底層網路（`UnderlyingNetworks`）的計費狀態決定」。
+In Android's connectivity model, calling `setMetered(false)` means the VPN tunnel itself does not impose an extra metered flag; instead, its meteredness follows the active `UnderlyingNetworks`:
 
-- 當手機連線至 Wi-Fi（`NOT_METERED`）時，VPN 會繼承非計費狀態，背景自動備份可正常執行。
-- 當手機切換至 4G / 5G 行動網路時，底層網路不具備 `NOT_METERED`，系統會自動移除 VPN 網路的非計費標記，Google Photos 等應用依然會暫停自動備份，不會額外消耗行動數據。
+- **On Wi-Fi (`NOT_METERED`)**: The VPN inherits `NOT_METERED`, so background Wi-Fi backups work normally.
+- **On 4G / 5G Cellular**: Since the underlying cellular network lacks `NOT_METERED`, Android automatically removes `NOT_METERED` from the VPN network, and apps continue to respect your cellular data restrictions.
 
-## 系統需求
+## Requirements
 
-- Android 10 (API 29) 或以上版本
-- 已取得 Root 權限並安裝 LSPosed（或相容之 Xposed 框架）
+- Android 10 (API 29) or higher
+- Rooted device with LSPosed (or a compatible Xposed framework)
 - Cisco Secure Client (`com.cisco.anyconnect.vpn.android.avf`)
 
-## 使用方式
+## Usage
 
-1. 下載並安裝 `AnyConnectUnmetered.apk`（或自行從源碼編譯）。
-2. 開啟 **LSPosed Manager**，進入「模組」頁面啟用 **AnyConnect Unmetered**。
-3. 確認作用域（Scope）已勾選 **Cisco Secure Client**（`com.cisco.anyconnect.vpn.android.avf`）。
-4. 強制停止並重新開啟 AnyConnect，重新建立 VPN 連線即可生效，無需重開機。
+1. Download and install `AnyConnectUnmetered.apk` (or build from source).
+2. Open **LSPosed Manager** and enable **AnyConnect Unmetered**.
+3. Ensure **Cisco Secure Client** (`com.cisco.anyconnect.vpn.android.avf`) is selected in the module scope.
+4. Force-stop AnyConnect and reconnect the VPN. No reboot is required.
 
-## 自行編譯
+## Building from Source
 
-本專案採用極簡純 Java 結構，不依賴大型建置工具或外部 Gradle 套件，Windows 環境下僅需 JDK 與 Android SDK Build-Tools 即可編譯：
+This project uses a minimal pure-Java layout with zero external Gradle dependencies. On Windows, you only need a JDK and Android SDK Build-Tools:
 
-1. 確認本機已安裝 JDK 與 Android SDK（視環境調整 `build.bat` 內的 `SDK_DIR`、`BUILD_TOOLS` 與 `ANDROID_JAR` 路徑）。
-2. 在專案根目錄執行：
+1. Verify or adjust `SDK_DIR`, `BUILD_TOOLS`, and `ANDROID_JAR` in `build.bat` to match your environment.
+2. Run in the project root:
    ```cmd
    build.bat
    ```
-3. 編譯並簽名後的 APK 會輸出至 `build\AnyConnectUnmetered.apk`。
+3. The signed APK will be generated at `build\AnyConnectUnmetered.apk`.
 
-## 專案結構
+## Project Structure
 
-- `app/src/main/java/io/transcend/anyconnect/unmetered/HookEntry.java`：核心 Hook 實作
-- `app/src/main/AndroidManifest.xml`：模組宣告與 Xposed Meta-Data
-- `app/src/main/res/values/arrays.xml`：預設作用域清單
-- `app/src/main/assets/xposed_init`：Xposed 入口類別定義
-- `xposed-stub/`：編譯期使用的 Xposed API 介面存根（不會打包進 APK）
-- `build.bat`：Windows CMD 一鍵編譯與簽名腳本
+- `app/src/main/java/io/transcend/anyconnect/unmetered/HookEntry.java` — Core Xposed hook implementation
+- `app/src/main/AndroidManifest.xml` — Module metadata and default scope declaration
+- `app/src/main/res/values/arrays.xml` — Default Xposed scope list
+- `app/src/main/assets/xposed_init` — Xposed entry point
+- `xposed-stub/` — Compile-time Xposed API stubs (not packaged into the APK)
+- `build.bat` — Windows CMD build and signing script
